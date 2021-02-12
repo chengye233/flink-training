@@ -18,6 +18,10 @@
 
 package org.apache.flink.training.exercises.ridesandfares;
 
+import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -28,59 +32,92 @@ import org.apache.flink.training.exercises.common.datatypes.TaxiRide;
 import org.apache.flink.training.exercises.common.sources.TaxiFareGenerator;
 import org.apache.flink.training.exercises.common.sources.TaxiRideGenerator;
 import org.apache.flink.training.exercises.common.utils.ExerciseBase;
-import org.apache.flink.training.exercises.common.utils.MissingSolutionException;
 import org.apache.flink.util.Collector;
+
+import java.util.Objects;
 
 /**
  * The "Stateful Enrichment" exercise of the Flink training in the docs.
  *
  * <p>The goal for this exercise is to enrich TaxiRides with fare information.
- *
  */
 public class RidesAndFaresExercise extends ExerciseBase {
 
-	/**
-	 * Main method.
-	 *
-	 * @throws Exception which occurs during job execution.
-	 */
-	public static void main(String[] args) throws Exception {
+    /**
+     * Main method.
+     *
+     * @throws Exception which occurs during job execution.
+     */
+    public static void main(String[] args) throws Exception {
 
-		// set up streaming execution environment
-		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		env.setParallelism(ExerciseBase.parallelism);
+        // set up streaming execution environment
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(ExerciseBase.parallelism);
 
-		DataStream<TaxiRide> rides = env
-				.addSource(rideSourceOrTest(new TaxiRideGenerator()))
-				.filter((TaxiRide ride) -> ride.isStart)
-				.keyBy((TaxiRide ride) -> ride.rideId);
+        DataStream<TaxiRide> rides = env
+                .addSource(rideSourceOrTest(new TaxiRideGenerator()))
+                .filter((TaxiRide ride) -> ride.isStart)
+                .keyBy((TaxiRide ride) -> ride.rideId);
 
-		DataStream<TaxiFare> fares = env
-				.addSource(fareSourceOrTest(new TaxiFareGenerator()))
-				.keyBy((TaxiFare fare) -> fare.rideId);
+        DataStream<TaxiFare> fares = env
+                .addSource(fareSourceOrTest(new TaxiFareGenerator()))
+                .keyBy((TaxiFare fare) -> fare.rideId);
 
-		DataStream<Tuple2<TaxiRide, TaxiFare>> enrichedRides = rides
-				.connect(fares)
-				.flatMap(new EnrichmentFunction());
+        DataStream<Tuple2<TaxiRide, TaxiFare>> enrichedRides = rides
+                .connect(fares)
+                .flatMap(new EnrichmentFunction());
 
-		printOrTest(enrichedRides);
+        printOrTest(enrichedRides);
 
-		env.execute("Join Rides with Fares (java RichCoFlatMap)");
-	}
+        env.execute("Join Rides with Fares (java RichCoFlatMap)");
+    }
 
-	public static class EnrichmentFunction extends RichCoFlatMapFunction<TaxiRide, TaxiFare, Tuple2<TaxiRide, TaxiFare>> {
+    public static class EnrichmentFunction extends RichCoFlatMapFunction<TaxiRide, TaxiFare, Tuple2<TaxiRide, TaxiFare>> {
+        /**
+         * 保存相同rideId的TaxiRide
+         */
+        private transient ValueState<TaxiRide> taxiRideValueState;
+        /**
+         * 保存相同rideId的TaxiFare
+         */
+        private transient ValueState<TaxiFare> taxiFareValueState;
 
-		@Override
-		public void open(Configuration config) throws Exception {
-			throw new MissingSolutionException();
-		}
+        @Override
+        public void open(Configuration config) throws Exception {
+            ValueStateDescriptor<TaxiRide> rideMapStateDescriptor = new ValueStateDescriptor<>("taxiRideValueState", TypeInformation.of(TaxiRide.class));
+            taxiRideValueState = getRuntimeContext().getState(rideMapStateDescriptor);
+            ValueStateDescriptor<TaxiFare> taxiFareValueState = new ValueStateDescriptor<>("taxiFareValueState", TypeInformation.of(TaxiFare.class));
+            this.taxiFareValueState = getRuntimeContext().getState(taxiFareValueState);
+        }
 
-		@Override
-		public void flatMap1(TaxiRide ride, Collector<Tuple2<TaxiRide, TaxiFare>> out) throws Exception {
-		}
+        @Override
+        public void flatMap1(TaxiRide ride, Collector<Tuple2<TaxiRide, TaxiFare>> out) throws Exception {
+            if (Objects.isNull(ride)) {
+                return;
+            }
+            // 只有2种情况,要么ride先到,要么fare先到。一方先到就等另一方
+            if (Objects.isNull(taxiFareValueState.value())) {
+                taxiRideValueState.update(ride);
+                return;
+            }
+            out.collect(new Tuple2<>(ride, taxiFareValueState.value()));
+            // 有状态的是另一边
+            taxiFareValueState.clear();
+        }
 
-		@Override
-		public void flatMap2(TaxiFare fare, Collector<Tuple2<TaxiRide, TaxiFare>> out) throws Exception {
-		}
-	}
+        @Override
+        public void flatMap2(TaxiFare fare, Collector<Tuple2<TaxiRide, TaxiFare>> out) throws Exception {
+            if (Objects.isNull(fare)) {
+                return;
+            }
+            // 只有2种情况,要么ride先到,要么fare先到。一方先到就等另一方
+            if (Objects.isNull(taxiRideValueState.value())) {
+                taxiFareValueState.update(fare);
+                return;
+            }
+            out.collect(new Tuple2<>(taxiRideValueState.value(), fare));
+            // 有状态的是另一边
+            taxiRideValueState.clear();
+        }
+    }
 }
