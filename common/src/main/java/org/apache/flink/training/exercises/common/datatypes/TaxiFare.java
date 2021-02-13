@@ -117,4 +117,7 @@ public class TaxiFare implements Serializable {
 		return startTime.toEpochMilli();
 	}
 
+	public float getTip() {
+		return tip;
+	}
 }

@@ -84,6 +84,7 @@ public class RidesAndFaresExercise extends ExerciseBase {
 
         @Override
         public void open(Configuration config) throws Exception {
+            System.out.println("open taxiRideValueState");
             ValueStateDescriptor<TaxiRide> rideMapStateDescriptor = new ValueStateDescriptor<>("taxiRideValueState", TypeInformation.of(TaxiRide.class));
             taxiRideValueState = getRuntimeContext().getState(rideMapStateDescriptor);
             ValueStateDescriptor<TaxiFare> taxiFareValueState = new ValueStateDescriptor<>("taxiFareValueState", TypeInformation.of(TaxiFare.class));
@@ -99,6 +100,9 @@ public class RidesAndFaresExercise extends ExerciseBase {
             if (Objects.isNull(taxiFareValueState.value())) {
                 taxiRideValueState.update(ride);
                 return;
+            }
+            if (!Objects.equals(ride.rideId, taxiFareValueState.value().rideId)) {
+                System.out.println("flatMap1 not equals: " + taxiRideValueState.value());
             }
             out.collect(new Tuple2<>(ride, taxiFareValueState.value()));
             // 有状态的是另一边

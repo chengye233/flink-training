@@ -27,31 +27,33 @@ import org.apache.flink.training.exercises.common.datatypes.TaxiFare;
  * timestamps.
  *
  * <p>The stream is generated in order, and it includes Watermarks.
- *
  */
 public class TaxiFareGenerator implements SourceFunction<TaxiFare> {
 
-	private volatile boolean running = true;
+    private volatile boolean running = true;
 
-	@Override
-	public void run(SourceContext<TaxiFare> ctx) throws Exception {
+    @Override
+    public void run(SourceContext<TaxiFare> ctx) throws Exception {
 
-		long id = 1;
+        long id = 1;
 
-		while (running) {
-			TaxiFare fare = new TaxiFare(id);
-			id += 1;
+        while (running) {
+            // 这里的startTime是随id增长的
+            TaxiFare fare = new TaxiFare(id);
+            id += 1;
 
-			ctx.collectWithTimestamp(fare, fare.getEventTime());
-			ctx.emitWatermark(new Watermark(fare.getEventTime()));
+            ctx.collectWithTimestamp(fare, fare.getEventTime());
+            // 这里水位线使用事件事件,由于startTime随id增长,所以这里很快就会触发后面Time.hour(1)的窗口函数
+            // 默认200ms间隔的水位线就被覆盖了
+            ctx.emitWatermark(new Watermark(fare.getEventTime()));
 
-			// match our event production rate to that of the TaxiRideGenerator
-			Thread.sleep(TaxiRideGenerator.SLEEP_MILLIS_PER_EVENT);
-		}
-	}
+            // match our event production rate to that of the TaxiRideGenerator
+            Thread.sleep(TaxiRideGenerator.SLEEP_MILLIS_PER_EVENT);
+        }
+    }
 
-	@Override
-	public void cancel() {
-		running = false;
-	}
+    @Override
+    public void cancel() {
+        running = false;
+    }
 }
